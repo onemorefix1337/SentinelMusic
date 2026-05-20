@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>sentinel music</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="config.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -396,6 +398,58 @@ html, body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── loading overlay ── */
+#load-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,10,10,.92);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  padding: 40px;
+  text-align: center;
+  backdrop-filter: blur(4px);
+}
+#load-overlay.show { display: flex; }
+#load-track-name {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#load-track-artist {
+  font-size: 10px;
+  color: var(--white2);
+  font-weight: 300;
+  margin-bottom: 28px;
+}
+.load-bar-wrap {
+  width: 240px;
+  height: 2px;
+  background: var(--black3);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+#load-bar {
+  height: 100%;
+  background: var(--yellow);
+  width: 0%;
+  transition: width .15s;
+  border-radius: 1px;
+}
+#load-pct {
+  font-size: 10px;
+  color: var(--white3);
+  font-weight: 300;
+  letter-spacing: 1px;
+}
+
 /* ── auth ── */
 #auth-screen {
   position: fixed; inset: 0;
@@ -435,6 +489,24 @@ html, body {
   z-index: 100;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* offline badge */
+#offline-badge {
+  position: fixed;
+  top: 10px; right: 12px;
+  background: var(--black3);
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+  padding: 3px 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--yellow);
+  text-transform: uppercase;
+  display: none;
+  z-index: 50;
+  font-weight: 300;
+}
+#offline-badge.show { display: block; }
 </style>
 </head>
 <body>
@@ -526,7 +598,14 @@ html, body {
   </nav>
 </div>
 
+<div id="load-overlay">
+  <div id="load-track-name"></div>
+  <div id="load-track-artist"></div>
+  <div class="load-bar-wrap"><div id="load-bar"></div></div>
+  <div id="load-pct">0%</div>
+</div>
 <div id="toast"></div>
+<div id="offline-badge">офлайн</div>
 <audio id="audio-el" preload="none"></audio>
 
 <script>
@@ -677,6 +756,8 @@ function row(t, i) {
 
 // ── player ───────────────────────────────────────────────────────
 
+let _blobUrl = null;
+
 async function play(trackId, idx) {
   currentId = trackId;
   qIdx = idx;
@@ -686,17 +767,12 @@ async function play(trackId, idx) {
     document.getElementById('pl-title').textContent = t.title || '—';
     document.getElementById('pl-artist').textContent = t.artist || '';
     const th = document.getElementById('pl-thumb');
-    th.src = t.thumbnail ? `${API}/thumb/${trackId}` : '';
+    th.src = t.thumbnail ? `${API}/thumb/${encodeURIComponent(trackId)}` : '';
     th.style.opacity = t.thumbnail ? '1' : '0';
   }
 
   document.getElementById('player').classList.add('visible');
   checkLiked(trackId);
-
-  audio.src = `${API}/stream/${encodeURIComponent(trackId)}?tok=${TOKEN}`;
-  audio.load();
-  audio.play().catch(()=>{});
-
   POST('/history', { track_id: trackId }).catch(()=>{});
 
   // обновляем playing класс
@@ -704,7 +780,58 @@ async function play(trackId, idx) {
   const rows = document.querySelectorAll('.track-row');
   if (rows[idx]) rows[idx].classList.add('playing');
 
-  setPlaying(true);
+  setPlaying(false);
+
+  // показываем overlay загрузки
+  const overlay = document.getElementById('load-overlay');
+  document.getElementById('load-track-name').textContent = t?.title || '—';
+  document.getElementById('load-track-artist').textContent = t?.artist || '';
+  document.getElementById('load-bar').style.width = '0%';
+  document.getElementById('load-pct').textContent = '0%';
+  overlay.classList.add('show');
+
+  try {
+    if (_blobUrl) { URL.revokeObjectURL(_blobUrl); _blobUrl = null; }
+    audio.src = '';
+
+    const resp = await fetch(`${API}/stream/${encodeURIComponent(trackId)}`, {
+      headers: { 'X-Session-Token': TOKEN }
+    });
+    if (!resp.ok) throw new Error('ошибка ' + resp.status);
+
+    const total = parseInt(resp.headers.get('content-length') || '0');
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      const pct = total ? Math.round(received / total * 100) : 0;
+      document.getElementById('load-bar').style.width = pct + '%';
+      document.getElementById('load-pct').textContent = total
+        ? pct + '%'
+        : (Math.round(received/1024) + ' кб');
+    }
+
+    // 100% на случай если content-length не было
+    document.getElementById('load-bar').style.width = '100%';
+    document.getElementById('load-pct').textContent = '100%';
+
+    const blob = new Blob(chunks, { type: 'audio/mpeg' });
+    _blobUrl = URL.createObjectURL(blob);
+    audio.src = _blobUrl;
+    audio.load();
+    await audio.play();
+    setPlaying(true);
+  } catch(e) {
+    toast('ошибка: ' + e.message);
+    setPlaying(false);
+  } finally {
+    overlay.classList.remove('show');
+  }
 }
 
 audio.addEventListener('timeupdate', () => {
@@ -839,6 +966,33 @@ function toast(msg) {
   clearTimeout(toastT);
   toastT = setTimeout(() => el.classList.remove('show'), 1800);
 }
+
+// ── service worker ────────────────────────────────────────────────
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(e => console.log('sw:', e));
+}
+
+// offline/online индикатор
+function updateOnlineStatus() {
+  const badge = document.getElementById('offline-badge');
+  if (!navigator.onLine) {
+    badge.classList.add('show');
+    toast('офлайн — играет кэш');
+  } else {
+    badge.classList.remove('show');
+  }
+}
+window.addEventListener('online', updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
+
+// кэшируем трек при первом воспроизведении (уведомляем SW)
+const _origPlay = play;
+play = async function(trackId, idx) {
+  await _origPlay(trackId, idx);
+  // SW сам кэширует при первом стриме
+};
 
 init();
 </script>
