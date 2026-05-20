@@ -72,19 +72,9 @@ async def auth_by_code(request: Request):
     if not code:
         raise HTTPException(400, "code required")
 
-    from handlers.music import _login_codes
-    import time
-    entry = _login_codes.get(code)
-    if not entry:
-        raise HTTPException(401, "неверный код")
-    user_id, expires = entry
-    if time.time() > expires:
-        _login_codes.pop(code, None)
-        raise HTTPException(401, "код истёк")
-
-    # код одноразовый
-    _login_codes.pop(code, None)
-
+    user_id = await db.pop_login_code(code)
+    if not user_id:
+        raise HTTPException(401, "неверный или истёкший код")
     token = _make_session(user_id)
     return {"ok": True, "token": token}
 
