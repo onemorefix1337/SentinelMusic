@@ -64,6 +64,31 @@ def _verify_tg_data(init_data: str) -> dict | None:
         return None
 
 
+@app.post("/api/auth/code")
+async def auth_by_code(request: Request):
+    """вход по коду из /code команды бота"""
+    body = await request.json()
+    code = str(body.get("code", "")).strip()
+    if not code:
+        raise HTTPException(400, "code required")
+
+    from handlers.music import _login_codes
+    import time
+    entry = _login_codes.get(code)
+    if not entry:
+        raise HTTPException(401, "неверный код")
+    user_id, expires = entry
+    if time.time() > expires:
+        _login_codes.pop(code, None)
+        raise HTTPException(401, "код истёк")
+
+    # код одноразовый
+    _login_codes.pop(code, None)
+
+    token = _make_session(user_id)
+    return {"ok": True, "token": token}
+
+
 @app.post("/api/auth")
 async def auth(request: Request):
     body = await request.json()
