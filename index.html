@@ -653,7 +653,8 @@ async function init() {
     localStorage.setItem('sm_tok', TOKEN);
     showApp();
   } catch(e) {
-    document.getElementById('auth-err').textContent = 'ошибка: ' + e.message;
+    document.getElementById('auth-err').textContent = 'ошибка: ' + (e.message || JSON.stringify(e));
+    console.error('AUTH ERR', e);
   }
 }
 
@@ -967,8 +968,9 @@ function toast(msg) {
 
 // ── service worker ────────────────────────────────────────────────
 
+// SW временно отключён
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(e => console.log('sw:', e));
+  navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
 }
 
 // offline/online индикатор
