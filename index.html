@@ -514,26 +514,7 @@ html, body {
 <div id="auth-screen">
   <div class="auth-title">SENTINEL<span>.</span></div>
   <div class="auth-sub">music</div>
-
-  <div id="auth-tg" style="display:none">
-    <div class="spinner"></div>
-  </div>
-
-  <div id="auth-code-form" style="display:none;width:100%;max-width:280px">
-    <input id="code-input" type="number" maxlength="6" placeholder="000000"
-      style="width:100%;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.15);
-      padding:10px 0;color:#e8d44d;font-family:'DM Mono',monospace;font-size:32px;letter-spacing:8px;
-      text-align:center;outline:none;margin-bottom:20px;"
-      oninput="if(this.value.length>6)this.value=this.value.slice(0,6)"
-      onkeydown="if(event.key==='Enter')submitCode()">
-    <button onclick="submitCode()" style="width:100%;padding:10px;background:#e8d44d;border:none;
-      border-radius:2px;color:#0a0a0a;font-family:'DM Mono',monospace;font-size:12px;
-      letter-spacing:2px;cursor:pointer;text-transform:uppercase;">войти</button>
-    <div style="margin-top:12px;font-size:10px;color:#504a42;font-weight:300;line-height:1.8">
-      напиши <b style="color:#a09a90">/code</b> боту<br>@sentinelmusic0x16_bot
-    </div>
-  </div>
-
+  <div class="spinner"></div>
   <div class="auth-err" id="auth-err"></div>
 </div>
 
@@ -644,7 +625,6 @@ const audio = document.getElementById('audio-el');
 async function init() {
   if (tg) { tg.expand(); tg.setHeaderColor('#0a0a0a'); tg.setBackgroundColor('#0a0a0a'); }
 
-  // проверяем сохранённый токен
   const saved = localStorage.getItem('sm_tok');
   if (saved) {
     TOKEN = saved;
@@ -656,49 +636,24 @@ async function init() {
     TOKEN = '';
   }
 
-  // пробуем войти через telegram initData
   const initData = tg?.initData || '';
-  if (initData) {
-    try {
-      const r = await fetch(API + '/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData })
-      });
-      const d = await r.json();
-      if (r.ok && d.token) {
-        TOKEN = d.token;
-        localStorage.setItem('sm_tok', TOKEN);
-        showApp();
-        return;
-      }
-    } catch(e) {}
+  if (!initData) {
+    document.getElementById('auth-err').textContent = 'открой в telegram';
+    return;
   }
-
-  // показываем форму ввода кода
-  document.getElementById('auth-tg').style.display = 'none';
-  document.getElementById('auth-code-form').style.display = 'block';
-}
-
-async function submitCode() {
-  const code = document.getElementById('code-input').value.trim();
-  const errEl = document.getElementById('auth-err');
-  if (code.length !== 6) { errEl.textContent = 'введи 6 цифр'; return; }
-  errEl.textContent = '';
   try {
-    const r = await fetch(API + '/auth/code', {
+    const r = await fetch(API + '/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code })
+      body: JSON.stringify({ initData })
     });
     const d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'неверный код');
+    if (!r.ok || !d.token) throw new Error(d.detail || 'error');
     TOKEN = d.token;
     localStorage.setItem('sm_tok', TOKEN);
     showApp();
   } catch(e) {
-    errEl.textContent = e.message;
-    document.getElementById('code-input').value = '';
+    document.getElementById('auth-err').textContent = 'ошибка: ' + e.message;
   }
 }
 
@@ -839,9 +794,7 @@ async function play(trackId, idx) {
     if (_blobUrl) { URL.revokeObjectURL(_blobUrl); _blobUrl = null; }
     audio.src = '';
 
-    const resp = await fetch(`${API}/stream/${encodeURIComponent(trackId)}`, {
-      headers: { 'X-Session-Token': TOKEN }
-    });
+    const resp = await fetch(`${API}/stream/${encodeURIComponent(trackId)}?tok=${TOKEN}`);
     if (!resp.ok) throw new Error('ошибка ' + resp.status);
 
     const total = parseInt(resp.headers.get('content-length') || '0');
